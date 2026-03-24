@@ -1,9 +1,21 @@
 import docker
-import os  # Added missing import
+import os  
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import rosbag2_py
 from pathlib import Path
+import rclpy             
+from rclpy.node import Node
+import json
+
+# --- ROS2 Initialization ---
+# This needs to happen once when the container starts
+try:
+    rclpy.init()
+    # We create a simple node that stays alive to query the graph
+    discovery_node = Node('dashboard_backend_discovery')
+except Exception as e:
+    print(f"ROS2 init error: {e}")
 
 app = FastAPI()
 
@@ -15,6 +27,23 @@ app.add_middleware(
 )
 
 client = docker.from_env()
+
+@app.get("/api/topics")
+async def get_topics():
+    """Queries the ROS2 graph for all currently active topics."""
+    try:
+        # get_topic_names_and_types returns: [('/topic_name', ['type/name']), ...]
+        topic_data = discovery_node.get_topic_names_and_types()
+        
+        # Format it for your React frontend
+        return [
+            {"name": name, "type": types[0]} 
+            for name, types in topic_data
+        ]
+    except Exception as e:
+        # If ROS2 fails, return an empty list so the UI doesn't crash
+        print(f"ROS2 Discovery Error: {e}")
+        return []
 
 # Helper for ROSbag Inspection
 def get_rosbag_options(uri, storage_id):
@@ -47,52 +76,49 @@ async def inspect_bag(path: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read bag: {str(e)}")
 
-@app.post("/start/{task_id}")
-async def start_task(
-    task_id: str, 
-    input_topic: str = "/rgb", 
-    source_type: str = "topic", 
-    bag_path: str = ""
-):
-    """
-    Tells Docker to spin up the worker image.
-    If source_type is 'bag', the container needs to know the bag_path.
-    """
-    container_name = f"worker_{task_id}_{os.urandom(2).hex()}"
+@app.get("/api/node-repository")
+async def get_node_repository():
+    """Reads the local JSON catalog and returns available node templates."""
+    try:
+        with open("nodes.json", "r") as f:
+            data = json.load(f)
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Could not load node catalog")
+
+@app.post("/start/{node_id}")
+async def start_node(node_id: str, config: dict):
+    # 1. Load catalog...
+    with open("nodes.json", "r") as f:
+        catalog = json.load(f)
     
-    config = {
-        "obj_det": {"image": "yolo_worker:latest", "model": "yolo11n.pt"},
-        "obj_seg": {"image": "seg_worker:latest", "model": "leaf_seg.pt"},
-        "lidar_proc": {"image": "lidar_worker:latest", "model": "default.pt"}
-    }
-    
-    task = config.get(task_id, config["obj_det"])
+    node_template = next((n for n in catalog if n["id"] == node_id), None)
+    if not node_template:
+        raise HTTPException(status_code=404, detail="Node template not found")
 
     try:
-        # We mount the host directory so the Docker container can access the bag file
-        volumes = {}
-        if source_type == "bag" and bag_path:
-            # Mount the directory containing the bag into the container
-            bag_dir = str(Path(bag_path).parent)
-            volumes[bag_dir] = {'bind': '/mnt/bags', 'mode': 'ro'}
-            # Update path to be relative to container mount
-            bag_path = f"/mnt/bags/{os.path.basename(bag_path)}"
+        image_name = node_template["image"]
+        
+        # 2. Check if image exists locally, if not, pull it
+        try:
+            client.images.get(image_name)
+        except docker.errors.ImageNotFound:
+            print(f"Image {image_name} not found locally. Pulling from public registry...")
+            # This works for any PUBLIC GHCR or Docker Hub image
+            client.images.pull(image_name)
 
+        # 3. Run the container using the image from the JSON
         container = client.containers.run(
-            image=task["image"],
-            name=container_name,
+            image=node_template["image"],
             detach=True,
             network_mode="host",
-            volumes=volumes, # Added volume mounting for bags
             environment={
-                "YOLO_MODEL": task["model"],
-                "SOURCE_TYPE": source_type,
-                "BAG_PATH": bag_path,
-                "INPUT_TOPIC": input_topic,
-                "OUTPUT_TOPIC": f"/{container_name}/output"
-            }
+                "INPUT_TOPIC": config.get("input_topic"),
+                "MODEL": node_template["params"]["default_model"]
+            },
+            labels={"managed_by": "perception_dashboard", "node_type": node_id}
         )
-        return {"status": "success", "container_id": container.id, "name": container_name}
+        return {"status": "success", "id": container.id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -1,22 +1,30 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Activity, LayoutGrid, Box, Terminal, Play, Square, Cpu, HardDrive, Settings2, X } from 'lucide-react'
 import NodeLibrary from './pages/NodeLibrary'
-import Launchpad from './pages/Launchpad';
-import { NODE_TYPES } from './pages/NodeLibrary';
+import Launchpad from './pages/Launchpad'
 
 function App() {
   const [activeTab, setActiveTab] = useState('fleet');
   const [selectedNodeTemplate, setSelectedNodeTemplate] = useState<any>(null);
+  const [nodeTemplates, setNodeTemplates] = useState<any[]>([]);
   
   // State for nodes currently running in your "Fleet"
   const [activeNodes, setActiveNodes] = useState([
     { id: 7721, name: 'Leaf_Seg_Worker', type: 'Detection', weights: 'V11.0.4', status: 'Running' }
   ]);
 
+  // Sync Node Templates from Backend for Launchpad and Modals
+  useEffect(() => {
+    fetch('http://localhost:8000/api/node-repository')
+      .then(res => res.json())
+      .then(data => setNodeTemplates(data))
+      .catch(err => console.error("Could not sync node repository:", err));
+  }, []);
+
   const deployNode = (weights: string) => {
     const newNode = {
       id: Math.floor(Math.random() * 9000) + 1000,
-      name: `${selectedNodeTemplate.name.replace(' ', '_')}_Instance`,
+      name: `${selectedNodeTemplate.name.replace(/\s+/g, '_')}_Instance`,
       type: selectedNodeTemplate.name,
       weights: weights,
       status: 'Idle'
@@ -114,9 +122,9 @@ function App() {
             </div>
           )}
 
-          {activeTab === 'launchpad' && <Launchpad nodes={NODE_TYPES} />}
+          {activeTab === 'launchpad' && <Launchpad nodes={nodeTemplates} />}
 
-          {activeTab === 'models' && <NodeLibrary onSelectNode={(node) => setSelectedNodeTemplate(node)} />}
+          {activeTab === 'models' && <NodeLibrary onCreateNode={(node) => setSelectedNodeTemplate(node)} />}
           
           {activeTab === 'logs' && (
             <div className="bg-black/40 rounded-2xl p-6 font-mono text-xs text-blue-400 border border-white/5 h-[600px] overflow-y-auto whitespace-pre-wrap">
@@ -139,11 +147,12 @@ function App() {
               <button onClick={() => setSelectedNodeTemplate(null)} className="p-2 hover:bg-white/5 rounded-full transition-colors"><X size={20} /></button>
             </div>
             <div className="space-y-3">
-              {selectedNodeTemplate.availableWeights.map((weight: string) => (
+              {/* Updated to use params.available_weights from nodes.json */}
+              {(selectedNodeTemplate.params?.available_weights || [selectedNodeTemplate.params?.default_model || 'Standard']).map((weight: string) => (
                 <button key={weight} onClick={() => deployNode(weight)} className="w-full text-left p-4 rounded-2xl bg-white/5 border border-white/5 hover:border-blue-500 hover:bg-blue-500/5 transition-all flex justify-between items-center group">
                   <div>
                     <p className="text-sm font-bold text-white group-hover:text-blue-400">{weight}</p>
-                    <p className="text-[10px] text-slate-500 font-mono tracking-tighter">FP16 Optimized</p>
+                    <p className="text-[10px] text-slate-500 font-mono tracking-tighter">Container-Optimized</p>
                   </div>
                   <Settings2 size={16} className="text-slate-600" />
                 </button>

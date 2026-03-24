@@ -1,0 +1,28 @@
+[
+  {
+    "id": "obj_det_yolo",
+    "name": "YOLO Object Detection",
+    "image": "ghcr.io/your-username/yolo_worker:latest",
+    "category": "Computer Vision",
+    "description": "High-speed 2D detection for common spatial objects.",
+    "params": {
+      "input_type": "sensor_msgs/msg/Image",
+      "output_type": "vision_msgs/msg/Detection2DArray",
+      "default_model": "yolo11n.pt"
+    },
+    "launch_args": ["conf_threshold", "device_id"]
+  },
+  {
+    "id": "leaf_seg",
+    "name": "Instance Segmentation",
+    "image": "ghcr.io/your-username/seg_worker:latest",
+    "category": "Agriculture AI",
+    "description": "Pixel-level masking for organic material separation.",
+    "params": {
+      "input_type": "sensor_msgs/msg/Image",
+      "output_type": "sensor_msgs/msg/Image",
+      "default_model": "leaf_seg.pt"
+    },
+    "launch_args": ["mask_opacity"]
+  }
+]

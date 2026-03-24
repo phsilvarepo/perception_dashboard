@@ -35,16 +35,65 @@ export default function Launchpad({ nodes }: { nodes: any[] }) {
     }
   };
 
-  // 3. Filter logic for compatible nodes
+  /// 3. Precise Filter logic using the input_type from nodes.json
   const compatibleNodes = nodes.filter(node => {
-    const activeTopic = sourceType === 'bag' ? selectedSubTopic : selectedSource;
-    if (!activeTopic) return true;
+    // Determine the ROS2 Message Type of the currently selected topic
+    let activeTopicType = "";
     
-    // Simple filter: hide LiDAR nodes for image topics and vice versa
-    if (activeTopic.includes('image') || activeTopic.includes('rgb')) return node.id !== 'lidar_proc';
-    if (activeTopic.includes('points') || activeTopic.includes('lidar')) return node.id === 'lidar_proc';
-    return true;
+    if (sourceType === 'topic') {
+      const topicObj = topics.find(t => t.name === selectedSource);
+      activeTopicType = topicObj?.type || "";
+    } else if (sourceType === 'bag') {
+      const topicObj = topics.find(t => t.name === selectedSubTopic);
+      activeTopicType = topicObj?.type || "";
+    }
+
+    // If the user hasn't picked a topic/subtopic yet, show all available nodes
+    if (!activeTopicType) return true;
+
+    /** * CRITICAL FILTER: 
+     * Only show nodes where the required input_type matches the topic type.
+     * We use .includes() or a direct match to handle variations like 
+     * 'sensor_msgs/Image' vs 'sensor_msgs/msg/Image'.
+     */
+    const nodeRequiredType = node.params.input_type;
+    
+    return activeTopicType.includes(nodeRequiredType) || nodeRequiredType.includes(activeTopicType);
   });
+
+  const handleDeploy = async () => {
+    if (!selectedNode) return;
+
+    // 1. Prepare the payload based on whether it's a Live Topic or a ROSbag
+    const deploymentConfig = {
+      input_topic: sourceType === 'bag' ? selectedSubTopic : selectedSource,
+      source_type: sourceType,
+      // If it's a bag, we pass the file path so the worker can find it
+      bag_path: sourceType === 'bag' ? selectedSource : null,
+      // Pass default model from our nodes.json
+      model: selectedNode.params.default_model 
+    };
+
+    try {
+      // 2. Call your FastAPI backend
+      const response = await fetch(`http://localhost:8000/start/${selectedNode.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(deploymentConfig)
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        alert(`🚀 Deployment Started! Container ID: ${result.id.substring(0, 12)}`);
+        // Optional: Reset selection or navigate to "Fleet" tab
+      } else {
+        const errorData = await response.json();
+        alert(`❌ Deployment Failed: ${errorData.detail}`);
+      }
+    } catch (err) {
+      console.error("Network error during deployment:", err);
+    }
+  };
 
   return (
     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20">
@@ -168,7 +217,8 @@ export default function Launchpad({ nodes }: { nodes: any[] }) {
           </div>
 
           <div className="pt-6">
-            <button 
+            <button
+              onClick={handleDeploy} 
               disabled={!selectedNode}
               className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 transition-all ${selectedNode ? 'bg-white text-black hover:bg-blue-600 shadow-[0_20px_40px_rgba(0,0,0,0.3)]' : 'bg-slate-800 text-slate-600'}`}
             >
