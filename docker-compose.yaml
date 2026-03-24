@@ -1,0 +1,13 @@
+services:
+  dashboard:
+    build: 
+      context: .
+      dockerfile: dashboard.dockerfile
+    network_mode: host # Perfect - stays 'host' for ROS2 discovery
+    privileged: true   # Optional: Helps with hardware access if needed
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # MOUNT YOUR HOME FOLDER HERE
+      - /home/unparallel:/home/unparallel 
+    environment:
+      - ROS_DOMAIN_ID=0 # Match this to your workstation's ID
