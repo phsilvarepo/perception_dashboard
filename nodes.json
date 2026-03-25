@@ -2,12 +2,12 @@
   {
     "id": "obj_det_yolo",
     "name": "YOLO Object Detection",
-    "image": "ghcr.io/your-username/yolo_worker:latest",
+    "image": "ghcr.io/phsilvarepo/yolov11-ros2-humble:latest",
     "category": "Computer Vision",
     "description": "High-speed 2D detection for common spatial objects.",
     "params": {
       "input_type": "sensor_msgs/msg/Image",
-      "output_type": "vision_msgs/msg/Detection2DArray",
+      "output_type": "sensor_msgs/msg/Image",
       "default_model": "yolo11n.pt"
     },
     "launch_args": ["conf_threshold", "device_id"]
@@ -15,13 +15,13 @@
   {
     "id": "leaf_seg",
     "name": "Instance Segmentation",
-    "image": "ghcr.io/your-username/seg_worker:latest",
+    "image": "ghcr.io/phsilvarepo/yolov11-ros2:latest",
     "category": "Agriculture AI",
     "description": "Pixel-level masking for organic material separation.",
     "params": {
       "input_type": "sensor_msgs/msg/Image",
       "output_type": "sensor_msgs/msg/Image",
-      "default_model": "leaf_seg.pt"
+      "default_model": "/ros_ws/src/yolov11_ros2/leaf_seg.pt"
     },
     "launch_args": ["mask_opacity"]
   }

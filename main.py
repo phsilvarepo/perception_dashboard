@@ -55,26 +55,49 @@ def get_rosbag_options(uri, storage_id):
 
 @app.get("/api/inspect_bag")
 async def inspect_bag(path: str):
-    """Opens a bag file and returns the topics and types inside it."""
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    # 1. Normalize the path (ensure it's absolute for the container)
+    absolute_path = os.path.abspath(path)
+    
+    if not os.path.exists(absolute_path):
+        raise HTTPException(status_code=404, detail=f"Path not found: {absolute_path}")
 
     try:
-        # Check if it's a directory (db3) or file (mcap)
-        storage_id = "mcap" if path.endswith(".mcap") else "sqlite3"
-        
+        # 2. Better Storage Detection
+        # .mcap is a file, .db3 is usually inside a folder with a metadata.yaml
+        if absolute_path.endswith(".mcap"):
+            storage_id = "mcap"
+            uri = absolute_path
+        else:
+            storage_id = "sqlite3"
+            # If they picked the .db3 file, we actually want the parent directory 
+            # where the metadata.yaml lives
+            uri = os.path.dirname(absolute_path) if absolute_path.endswith(".db3") else absolute_path
+
         reader = rosbag2_py.SequentialReader()
-        storage_options, converter_options = get_rosbag_options(path, storage_id)
+        
+        storage_options = rosbag2_py.StorageOptions(uri=uri, storage_id=storage_id)
+        converter_options = rosbag2_py.ConverterOptions(
+            input_serialization_format='cdr',
+            output_serialization_format='cdr'
+        )
+        
         reader.open(storage_options, converter_options)
         
+        # 3. Get metadata
         topic_types = reader.get_all_topics_and_types()
         
-        return [
+        # Format for Frontend
+        result = [
             {"name": topic.name, "type": topic.type} 
             for topic in topic_types
         ]
+        
+        print(f"Successfully inspected {storage_id} bag. Found {len(result)} topics.")
+        return result
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read bag: {str(e)}")
+        print(f"Detailed Bag Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"ROS2 Bag Error: {str(e)}")
 
 @app.get("/api/node-repository")
 async def get_node_repository():
@@ -88,7 +111,6 @@ async def get_node_repository():
 
 @app.post("/start/{node_id}")
 async def start_node(node_id: str, config: dict):
-    # 1. Load catalog...
     with open("nodes.json", "r") as f:
         catalog = json.load(f)
     
@@ -97,24 +119,32 @@ async def start_node(node_id: str, config: dict):
         raise HTTPException(status_code=404, detail="Node template not found")
 
     try:
-        image_name = node_template["image"]
-        
-        # 2. Check if image exists locally, if not, pull it
-        try:
-            client.images.get(image_name)
-        except docker.errors.ImageNotFound:
-            print(f"Image {image_name} not found locally. Pulling from public registry...")
-            # This works for any PUBLIC GHCR or Docker Hub image
-            client.images.pull(image_name)
-
-        # 3. Run the container using the image from the JSON
+        # --- PART A: Handle ROSbag Player ---
+        if config.get("source_type") == "bag":
+            print("Creating container to play the bag using registry image!")
+            bag_path = config.get("bag_path")
+            bag_dir = os.path.dirname(bag_path)
+            
+            # 1. Use YOUR registry image here
+            player_image = "ghcr.io/phsilvarepo/rosbag-player-mcap:latest"
+            
+            client.containers.run(
+                image=player_image, 
+                command=f"ros2 bag play \"{bag_path}\" --loop",
+                network_mode="host",
+                detach=True,
+                volumes={bag_dir: {'bind': bag_dir, 'mode': 'rw'}},
+                labels={"managed_by": "perception_dashboard", "role": "player"}
+            )
+        # --- PART B: Launch Perception Worker ---
         container = client.containers.run(
             image=node_template["image"],
             detach=True,
             network_mode="host",
             environment={
-                "INPUT_TOPIC": config.get("input_topic"),
-                "MODEL": node_template["params"]["default_model"]
+                "YOLO_INPUT_TOPIC": config.get("input_topic"),
+                "YOLO_MODEL": config.get("model", node_template["params"]["default_model"]),
+                "YOLO_OUTPUT_TOPIC": "/yolo/detections_image",
             },
             labels={"managed_by": "perception_dashboard", "node_type": node_id}
         )
@@ -141,12 +171,21 @@ async def explore_path(path: str = "/home"):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/stop/{container_name}")
-async def stop_task(container_name: str):
+@app.post("/stop/{container_id}")
+async def stop_task(container_id: str):
     try:
-        container = client.containers.get(container_name)
-        container.stop()
-        container.remove()
-        return {"status": "stopped"}
+        # 1. Stop the main worker container
+        worker = client.containers.get(container_id)
+        worker.stop()
+        worker.remove()
+        
+        # 2. Cleanup ANY orphaned bag players left behind by this dashboard
+        # This keeps your 'ros2 topic list' from getting cluttered
+        orphans = client.containers.list(filters={"label": "role=player"})
+        for player in orphans:
+            player.stop()
+            # remove=True was set in start_node, so it will delete itself
+            
+        return {"status": "stopped_all"}
     except Exception as e:
-        raise HTTPException(status_code=404, detail="Container not found")
+        raise HTTPException(status_code=404, detail=f"Cleanup error: {e}")

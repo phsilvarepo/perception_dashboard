@@ -37,6 +37,9 @@ export default function Launchpad({ nodes }: { nodes: any[] }) {
 
   /// 3. Precise Filter logic using the input_type from nodes.json
   const compatibleNodes = nodes.filter(node => {
+    // 1. Safety Check: If topics is not an array (due to backend error), return false
+    if (!Array.isArray(topics)) return false;
+
     // Determine the ROS2 Message Type of the currently selected topic
     let activeTopicType = "";
     
@@ -48,16 +51,13 @@ export default function Launchpad({ nodes }: { nodes: any[] }) {
       activeTopicType = topicObj?.type || "";
     }
 
-    // If the user hasn't picked a topic/subtopic yet, show all available nodes
+    // 2. If no specific topic is selected yet, we show all nodes 
+    // but the Step 2 UI is still locked by the opacity logic below.
     if (!activeTopicType) return true;
 
-    /** * CRITICAL FILTER: 
-     * Only show nodes where the required input_type matches the topic type.
-     * We use .includes() or a direct match to handle variations like 
-     * 'sensor_msgs/Image' vs 'sensor_msgs/msg/Image'.
-     */
     const nodeRequiredType = node.params.input_type;
     
+    // 3. Normalized comparison
     return activeTopicType.includes(nodeRequiredType) || nodeRequiredType.includes(activeTopicType);
   });
 

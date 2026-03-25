@@ -1,24 +1,23 @@
 import { useState, useEffect } from 'react'
-import { Activity, LayoutGrid, Box, Terminal, Play, Square, Cpu, HardDrive, Settings2, X } from 'lucide-react'
+import { Activity, LayoutGrid, Box, Terminal, Play, Cpu, Settings2, X } from 'lucide-react'
 import NodeLibrary from './pages/NodeLibrary'
 import Launchpad from './pages/Launchpad'
+import Fleet from './pages/Fleet'
 
 function App() {
   const [activeTab, setActiveTab] = useState('fleet');
   const [selectedNodeTemplate, setSelectedNodeTemplate] = useState<any>(null);
   const [nodeTemplates, setNodeTemplates] = useState<any[]>([]);
-  
-  // State for nodes currently running in your "Fleet"
-  const [activeNodes, setActiveNodes] = useState([
+  const [activeNodes, setActiveNodes] = useState<any[]>([
     { id: 7721, name: 'Leaf_Seg_Worker', type: 'Detection', weights: 'V11.0.4', status: 'Running' }
   ]);
 
-  // Sync Node Templates from Backend for Launchpad and Modals
+  // Sync Node Templates from Backend
   useEffect(() => {
     fetch('http://localhost:8000/api/node-repository')
       .then(res => res.json())
       .then(data => setNodeTemplates(data))
-      .catch(err => console.error("Could not sync node repository:", err));
+      .catch(err => console.error("Sync error:", err));
   }, []);
 
   const deployNode = (weights: string) => {
@@ -82,50 +81,16 @@ function App() {
               <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest leading-none mb-1">Network Status</p>
               <p className="text-xs text-green-400">127.0.0.1:8000</p>
             </div>
-            <div className="h-10 w-10 rounded-full border border-white/10 flex items-center justify-center bg-slate-900"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" /></div>
+            <div className="h-10 w-10 rounded-full border border-white/10 flex items-center justify-center bg-slate-900">
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+            </div>
           </div>
         </header>
 
         <section className="p-10">
-          {activeTab === 'fleet' && (
-            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <div className="mb-8">
-                <h3 className="text-2xl font-bold text-white tracking-tight">Active Perception Nodes</h3>
-                <p className="text-slate-500 text-sm">Monitor and control your deployed instances.</p>
-              </div>
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                {activeNodes.map(node => (
-                  <div key={node.id} className="relative group bg-slate-900/40 border border-white/10 rounded-2xl p-8 transition-all hover:border-blue-500/50">
-                    <div className="absolute top-0 right-0 p-6 opacity-5"><HardDrive size={80} /></div>
-                    <div className="flex justify-between items-start mb-10 relative z-10">
-                      <div>
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="px-2 py-0.5 bg-blue-500/10 text-blue-400 text-[10px] font-black rounded uppercase tracking-wider">{node.type}</span>
-                          <span className="text-slate-600 text-[10px] font-bold">{node.weights}</span>
-                        </div>
-                        <h4 className="text-xl font-bold text-white">{node.name}</h4>
-                        <p className="text-sm text-slate-400 mt-1 italic opacity-60">ID: {node.id} • Docker Runtime</p>
-                      </div>
-                      <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border ${node.status === 'Running' ? 'bg-green-500/5 border-green-500/20 text-green-400' : 'bg-slate-800/50 border-white/5 text-slate-500'}`}>
-                        <div className={`w-1.5 h-1.5 rounded-full ${node.status === 'Running' ? 'bg-green-400 animate-pulse' : 'bg-slate-600'}`} />
-                        <span className="text-[10px] font-black tracking-widest uppercase">{node.status}</span>
-                      </div>
-                    </div>
-                    <div className="flex gap-4 relative z-10">
-                      <button onClick={() => toggleNodeStatus(node.id)} className={`flex-1 flex items-center justify-center gap-2 h-12 rounded-xl font-bold text-sm transition-all ${node.status === 'Idle' ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.3)]' : 'bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500 hover:text-white'}`}>
-                        {node.status === 'Idle' ? <><Play size={16} /> Start</> : <><Square size={16} /> Terminate</>}
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
+          {activeTab === 'fleet' && <Fleet nodes={activeNodes} onToggleStatus={toggleNodeStatus} />}
           {activeTab === 'launchpad' && <Launchpad nodes={nodeTemplates} />}
-
           {activeTab === 'models' && <NodeLibrary onCreateNode={(node) => setSelectedNodeTemplate(node)} />}
-          
           {activeTab === 'logs' && (
             <div className="bg-black/40 rounded-2xl p-6 font-mono text-xs text-blue-400 border border-white/5 h-[600px] overflow-y-auto whitespace-pre-wrap">
               {`> [SYSTEM]: Initializing perception stream...\n> [DOCKER]: Container 7721 verified.\n> [GPU]: NVIDIA RTX Found (8GB VRAM)\n> [YOLO]: Loading Weights v11.0.4...\n> [LOG]: Inference stable at 14ms.`}
@@ -134,7 +99,7 @@ function App() {
         </section>
       </main>
 
-      {/* NODE CONFIGURATION MODAL */}
+      {/* MODAL */}
       {selectedNodeTemplate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-[#020617]/90 backdrop-blur-sm" onClick={() => setSelectedNodeTemplate(null)} />
@@ -147,7 +112,6 @@ function App() {
               <button onClick={() => setSelectedNodeTemplate(null)} className="p-2 hover:bg-white/5 rounded-full transition-colors"><X size={20} /></button>
             </div>
             <div className="space-y-3">
-              {/* Updated to use params.available_weights from nodes.json */}
               {(selectedNodeTemplate.params?.available_weights || [selectedNodeTemplate.params?.default_model || 'Standard']).map((weight: string) => (
                 <button key={weight} onClick={() => deployNode(weight)} className="w-full text-left p-4 rounded-2xl bg-white/5 border border-white/5 hover:border-blue-500 hover:bg-blue-500/5 transition-all flex justify-between items-center group">
                   <div>
