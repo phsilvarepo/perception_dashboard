@@ -1,9 +1,11 @@
 # Use the official ROS2 Humble base image
 FROM ros:humble-ros-base 
 
-# 1. Install system dependencies and ROS2 Python bindings
+# 1. Install system dependencies, OpenCV, and ROS2 CV Bridge
 RUN apt-get update && apt-get install -y \
     python3-pip \
+    python3-opencv \
+    ros-humble-cv-bridge \
     ros-humble-rosbag2-py \
     ros-humble-rosbag2-storage-mcap \
     ros-humble-rosbag2-storage-default-plugins \
@@ -13,6 +15,8 @@ RUN apt-get update && apt-get install -y \
 RUN pip3 install --no-cache-dir fastapi uvicorn docker
 
 WORKDIR /app
+
+ENV FASTDDS_BUILTIN_TRANSPORTS=UDPv4
 
 # 3. Copy your backend logic
 COPY ./main.py ./nodes.json ./

@@ -7,13 +7,32 @@ from pathlib import Path
 import rclpy             
 from rclpy.node import Node
 import json
+import cv2
+from cv_bridge import CvBridge
+from sensor_msgs.msg import Image
+from fastapi.responses import StreamingResponse
+import threading
+import asyncio
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.callback_groups import ReentrantCallbackGroup
 
-# --- ROS2 Initialization ---
-# This needs to happen once when the container starts
+bridge = CvBridge()
+latest_frames = {}
+active_subscriptions = set()  # Track subscribed topics to avoid duplicates
+
 try:
     rclpy.init()
-    # We create a simple node that stays alive to query the graph
     discovery_node = Node('dashboard_backend_discovery')
+    callback_group = ReentrantCallbackGroup()
+    
+    def spin_node():
+        executor = MultiThreadedExecutor()
+        executor.add_node(discovery_node)
+        executor.spin()
+    
+    thread = threading.Thread(target=spin_node, daemon=True)
+    thread.start()
 except Exception as e:
     print(f"ROS2 init error: {e}")
 
@@ -30,22 +49,16 @@ client = docker.from_env()
 
 @app.get("/api/topics")
 async def get_topics():
-    """Queries the ROS2 graph for all currently active topics."""
     try:
-        # get_topic_names_and_types returns: [('/topic_name', ['type/name']), ...]
         topic_data = discovery_node.get_topic_names_and_types()
-        
-        # Format it for your React frontend
         return [
             {"name": name, "type": types[0]} 
             for name, types in topic_data
         ]
     except Exception as e:
-        # If ROS2 fails, return an empty list so the UI doesn't crash
         print(f"ROS2 Discovery Error: {e}")
         return []
 
-# Helper for ROSbag Inspection
 def get_rosbag_options(uri, storage_id):
     storage_options = rosbag2_py.StorageOptions(uri=uri, storage_id=storage_id)
     converter_options = rosbag2_py.ConverterOptions(
@@ -55,7 +68,6 @@ def get_rosbag_options(uri, storage_id):
 
 @app.get("/api/inspect_bag")
 async def inspect_bag(path: str):
-    # 1. Normalize the path (ensure it's absolute for the container)
     absolute_path = os.path.abspath(path)
     
     if not os.path.exists(absolute_path):
@@ -78,11 +90,8 @@ async def inspect_bag(path: str):
         )
         
         reader.open(storage_options, converter_options)
-        
-        # 3. Get metadata
         topic_types = reader.get_all_topics_and_types()
         
-        # Format for Frontend
         result = [
             {"name": topic.name, "type": topic.type} 
             for topic in topic_types
@@ -97,7 +106,6 @@ async def inspect_bag(path: str):
 
 @app.get("/api/node-repository")
 async def get_node_repository():
-    """Reads the local JSON catalog and returns available node templates."""
     try:
         with open("nodes.json", "r") as f:
             data = json.load(f)
@@ -120,8 +128,6 @@ async def start_node(node_id: str, config: dict):
             bag_dir = os.path.dirname(bag_path)
             
             player_image = "ghcr.io/phsilvarepo/rosbag-player-mcap:latest"
-            
-            # Strip down to basics: Source -> Play -> Path -> Loop
             docker_command = (
                 f"bash -c 'source /opt/ros/humble/setup.bash && "
                 f"ros2 bag play \"{bag_path}\" --loop'"
@@ -137,7 +143,7 @@ async def start_node(node_id: str, config: dict):
                 volumes={bag_dir: {'bind': bag_dir, 'mode': 'rw'}},
                 labels={"managed_by": "perception_dashboard", "role": "player"}
             )
-        # --- PART B: Launch Perception Worker ---
+
         container = client.containers.run(
             image=node_template["image"],
             detach=True,
@@ -155,7 +161,6 @@ async def start_node(node_id: str, config: dict):
 
 @app.get("/api/explore")
 async def explore_path(path: str = "/home"):
-    """Helpful endpoint for your FileBrowser component"""
     try:
         target = Path(path)
         items = []
@@ -175,18 +180,125 @@ async def explore_path(path: str = "/home"):
 @app.post("/stop/{container_id}")
 async def stop_task(container_id: str):
     try:
-        # 1. Stop the main worker container
         worker = client.containers.get(container_id)
         worker.stop()
         worker.remove()
         
-        # 2. Cleanup ANY orphaned bag players left behind by this dashboard
-        # This keeps your 'ros2 topic list' from getting cluttered
         orphans = client.containers.list(filters={"label": "role=player"})
         for player in orphans:
             player.stop()
-            # remove=True was set in start_node, so it will delete itself
             
         return {"status": "stopped_all"}
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"Cleanup error: {e}")
+
+@app.post("/pause/{container_id}")
+async def pause_node(container_id: str):
+    try:
+        container = client.containers.get(container_id)
+        container.pause()
+        return {"status": "paused"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/resume/{container_id}")
+async def resume_node(container_id: str):
+    try:
+        container = client.containers.get(container_id)
+        container.unpause()
+        return {"status": "resumed"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/fleet")
+async def get_fleet():
+    try:
+        containers = client.containers.list(all=True, filters={"label": "managed_by=perception_dashboard"})
+        fleet = []
+        for c in containers:
+            if c.labels.get("role") == "player": continue
+            
+            env = c.attrs['Config']['Env']
+            model = next((v.split('=')[1] for v in env if "YOLO_MODEL" in v), "N/A")
+            output = next((v.split('=')[1] for v in env if "YOLO_OUTPUT_TOPIC" in v), "/results")
+            input_t = next((v.split('=')[1] for v in env if "YOLO_INPUT_TOPIC" in v), "/image_raw")
+
+            fleet.append({
+                "id": c.id,
+                "name": c.name,
+                "type": c.labels.get("node_type", "Perception"),
+                "weights": model,
+                "input_topic": input_t,
+                "output_topic": output,
+                "status": c.status.capitalize(),
+                "container_id": c.short_id
+            })
+        return fleet
+    except: return []
+
+def image_callback(msg, topic_name):
+    print(f"Received frame from {topic_name}!")
+    try:
+        cv_image = bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        
+        height, width = cv_image.shape[:2]
+        if width > 640:
+            scale = 640 / width
+            cv_image = cv2.resize(cv_image, (0,0), fx=scale, fy=scale)
+
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 80]
+        _, buffer = cv2.imencode('.jpg', cv_image, encode_param)
+        
+        latest_frames[topic_name] = buffer.tobytes()
+    except Exception as e:
+        print(f"Stream conversion error on {topic_name}: {e}")
+
+@app.get("/api/stream")
+async def stream_topic(topic: str):
+    full_topic = f"/{topic.lstrip('/')}"
+    
+    if full_topic not in active_subscriptions:
+        # Detect publisher QoS to avoid RELIABLE/BEST_EFFORT mismatch
+        try:
+            publisher_info = discovery_node.get_publishers_info_by_topic(full_topic)
+            if publisher_info:
+                pub_reliability = publisher_info[0].qos_profile.reliability
+                print(f"Matched publisher QoS for {full_topic}: {pub_reliability}")
+            else:
+                # No publisher visible yet — default to RELIABLE (ros2 bag play uses this)
+                pub_reliability = ReliabilityPolicy.RELIABLE
+                print(f"No publisher found for {full_topic}, defaulting to RELIABLE")
+        except Exception as e:
+            pub_reliability = ReliabilityPolicy.RELIABLE
+            print(f"QoS detection failed for {full_topic}: {e}, defaulting to RELIABLE")
+
+        qos_profile = QoSProfile(
+            reliability=pub_reliability,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+
+        # Fix: capture full_topic by value in lambda to avoid closure bug
+        discovery_node.create_subscription(
+            Image, 
+            full_topic, 
+            lambda msg, t=full_topic: image_callback(msg, t),
+            qos_profile,
+            callback_group=callback_group
+        )
+        active_subscriptions.add(full_topic)
+        print(f"Subscribed to: {full_topic}")
+
+    async def generate():
+        last_sent_frame = None
+        while True:
+            frame = latest_frames.get(full_topic)
+            if frame and frame != last_sent_frame:
+                last_sent_frame = frame
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+                await asyncio.sleep(0.03)
+            else:
+                await asyncio.sleep(0.1)
+
+    return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")

@@ -8,9 +8,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('fleet');
   const [selectedNodeTemplate, setSelectedNodeTemplate] = useState<any>(null);
   const [nodeTemplates, setNodeTemplates] = useState<any[]>([]);
-  const [activeNodes, setActiveNodes] = useState<any[]>([
-    { id: 7721, name: 'Leaf_Seg_Worker', type: 'Detection', weights: 'V11.0.4', status: 'Running' }
-  ]);
+  const [activeNodes, setActiveNodes] = useState<any[]>([]);
 
   // Sync Node Templates from Backend
   useEffect(() => {
@@ -20,23 +18,47 @@ function App() {
       .catch(err => console.error("Sync error:", err));
   }, []);
 
-  const deployNode = (weights: string) => {
-    const newNode = {
-      id: Math.floor(Math.random() * 9000) + 1000,
-      name: `${selectedNodeTemplate.name.replace(/\s+/g, '_')}_Instance`,
-      type: selectedNodeTemplate.name,
-      weights: weights,
-      status: 'Idle'
-    };
-    setActiveNodes([...activeNodes, newNode]);
-    setSelectedNodeTemplate(null);
-    setActiveTab('fleet');
+  // Sync Active Fleet from Docker via Backend
+  const refreshFleet = async () => {
+    try {
+      const res = await fetch('http://localhost:8000/api/fleet');
+      if (res.ok) {
+        const data = await res.json();
+        setActiveNodes(data);
+      }
+    } catch (err) {
+      console.error("Fleet sync error:", err);
+    }
   };
 
-  const toggleNodeStatus = (id: number) => {
-    setActiveNodes(nodes => nodes.map(n => 
-      n.id === id ? { ...n, status: n.status === 'Running' ? 'Idle' : 'Running' } : n
-    ));
+  // Poll for fleet updates every 3 seconds
+  useEffect(() => {
+    refreshFleet();
+    const interval = setInterval(refreshFleet, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const deployNode = async (weights: string) => {
+    // This UI function now triggers the actual backend deployment
+    // The Launchpad component handles the POST /start call, 
+    // but we can also trigger a refresh here if needed.
+    setSelectedNodeTemplate(null);
+    setActiveTab('fleet');
+    setTimeout(refreshFleet, 1000);
+  };
+
+  const toggleNodeStatus = async (id: string, action: 'terminate' | 'pause' | 'resume') => {
+    let endpoint = '';
+    if (action === 'terminate') endpoint = `http://localhost:8000/stop/${id}`;
+    else if (action === 'pause') endpoint = `http://localhost:8000/pause/${id}`;
+    else if (action === 'resume') endpoint = `http://localhost:8000/resume/${id}`;
+
+    try {
+      const response = await fetch(endpoint, { method: 'POST' });
+      if (response.ok) refreshFleet();
+    } catch (err) {
+      console.error(`Action ${action} failed`, err);
+    }
   };
 
   return (
@@ -93,7 +115,7 @@ function App() {
           {activeTab === 'models' && <NodeLibrary onCreateNode={(node) => setSelectedNodeTemplate(node)} />}
           {activeTab === 'logs' && (
             <div className="bg-black/40 rounded-2xl p-6 font-mono text-xs text-blue-400 border border-white/5 h-[600px] overflow-y-auto whitespace-pre-wrap">
-              {`> [SYSTEM]: Initializing perception stream...\n> [DOCKER]: Container 7721 verified.\n> [GPU]: NVIDIA RTX Found (8GB VRAM)\n> [YOLO]: Loading Weights v11.0.4...\n> [LOG]: Inference stable at 14ms.`}
+              {`> [SYSTEM]: Initializing perception stream...\n> [DOCKER]: Monitoring container fleet state...\n> [GPU]: NVIDIA RTX Found (8GB VRAM)\n> [SYNC]: Dashboard linked to Docker Engine.`}
             </div>
           )}
         </section>
