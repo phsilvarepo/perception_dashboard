@@ -62,15 +62,11 @@ async def inspect_bag(path: str):
         raise HTTPException(status_code=404, detail=f"Path not found: {absolute_path}")
 
     try:
-        # 2. Better Storage Detection
-        # .mcap is a file, .db3 is usually inside a folder with a metadata.yaml
         if absolute_path.endswith(".mcap"):
             storage_id = "mcap"
             uri = absolute_path
         else:
             storage_id = "sqlite3"
-            # If they picked the .db3 file, we actually want the parent directory 
-            # where the metadata.yaml lives
             uri = os.path.dirname(absolute_path) if absolute_path.endswith(".db3") else absolute_path
 
         reader = rosbag2_py.SequentialReader()
@@ -119,19 +115,24 @@ async def start_node(node_id: str, config: dict):
         raise HTTPException(status_code=404, detail="Node template not found")
 
     try:
-        # --- PART A: Handle ROSbag Player ---
         if config.get("source_type") == "bag":
-            print("Creating container to play the bag using registry image!")
             bag_path = config.get("bag_path")
             bag_dir = os.path.dirname(bag_path)
             
-            # 1. Use YOUR registry image here
             player_image = "ghcr.io/phsilvarepo/rosbag-player-mcap:latest"
+            
+            # Strip down to basics: Source -> Play -> Path -> Loop
+            docker_command = (
+                f"bash -c 'source /opt/ros/humble/setup.bash && "
+                f"ros2 bag play \"{bag_path}\" --loop'"
+            )
             
             client.containers.run(
                 image=player_image, 
-                command=f"ros2 bag play \"{bag_path}\" --loop",
+                command=docker_command,
                 network_mode="host",
+                ipc_mode="host",
+                pid_mode="host",
                 detach=True,
                 volumes={bag_dir: {'bind': bag_dir, 'mode': 'rw'}},
                 labels={"managed_by": "perception_dashboard", "role": "player"}

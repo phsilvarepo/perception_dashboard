@@ -2,11 +2,11 @@
 FROM ros:humble-ros-base 
 
 # 1. Install system dependencies and ROS2 Python bindings
-# ADDED: ros-humble-rosbag2-storage-mcap
 RUN apt-get update && apt-get install -y \
     python3-pip \
     ros-humble-rosbag2-py \
     ros-humble-rosbag2-storage-mcap \
+    ros-humble-rosbag2-storage-default-plugins \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Install Python web and docker libraries

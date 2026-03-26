@@ -2,7 +2,7 @@
   {
     "id": "obj_det_yolo",
     "name": "YOLO Object Detection",
-    "image": "ghcr.io/phsilvarepo/yolov11-ros2-humble:latest",
+    "image": "ghcr.io/phsilvarepo/yolov11-ros2-humble-base:latest",
     "category": "Computer Vision",
     "description": "High-speed 2D detection for common spatial objects.",
     "params": {
