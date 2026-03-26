@@ -10,7 +10,7 @@
       "output_type": "sensor_msgs/msg/Image",
       "default_model": "yolo11n.pt"
     },
-    "launch_args": ["conf_threshold", "device_id"]
+    "launch_args": ["conf_threshold", "output_topic", "model_path", "image resolution"]
   },
   {
     "id": "leaf_seg",
