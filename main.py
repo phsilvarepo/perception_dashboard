@@ -1,6 +1,6 @@
 import docker
 import os  
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 import rosbag2_py
 from pathlib import Path
@@ -16,6 +16,7 @@ import asyncio
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup
+import uuid
 
 bridge = CvBridge()
 latest_frames = {}
@@ -113,6 +114,32 @@ async def get_node_repository():
     except Exception as e:
         raise HTTPException(status_code=500, detail="Could not load node catalog")
 
+@app.get("/api/browse-models")
+async def browse_models(path: str = Query(None)):
+    """Allows the UI to browse for .pt files on the local machine"""
+    target_path = Path(path) if path and path != "undefined" else Path.home()
+
+    try:
+        items = []
+        if target_path.parent != target_path:
+            items.append({"name": "..", "path": str(target_path.parent), "is_dir": True})
+
+        for item in target_path.iterdir():
+            if item.name.startswith('.'): continue
+            if item.is_dir() or item.suffix == ".pt":
+                items.append({
+                    "name": item.name, 
+                    "path": str(item.absolute()), 
+                    "is_dir": item.is_dir()
+                })
+        
+        return {
+            "current": str(target_path.absolute()),
+            "items": sorted(items, key=lambda x: (not x['is_dir'], x['name']))
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/start/{node_id}")
 async def start_node(node_id: str, config: dict):
     with open("nodes.json", "r") as f:
@@ -123,6 +150,7 @@ async def start_node(node_id: str, config: dict):
         raise HTTPException(status_code=404, detail="Node template not found")
 
     try:
+        # --- 1. ROSBAG SOURCE LOGIC (UNTOUCHED) ---
         if config.get("source_type") == "bag":
             bag_path = config.get("bag_path")
             bag_dir = os.path.dirname(bag_path)
@@ -144,19 +172,71 @@ async def start_node(node_id: str, config: dict):
                 labels={"managed_by": "perception_dashboard", "role": "player"}
             )
 
+        # --- 2. OUTPUT TOPIC VALIDATION & GENERATION ---
+        user_output = config.get("output_topic", "").strip()
+        
+        if not user_output:
+            # Generate a unique ID: e.g., /obj_det_yolo/output_7a2b
+            short_id = str(uuid.uuid4())[:4]
+            final_output_topic = f"/{node_id}/output_{short_id}"
+        else:
+            # Clean the user input to ensure it starts with /
+            final_output_topic = f"/{user_output.lstrip('/')}"
+
+        # --- 3. DYNAMIC ENVIRONMENT BUILDING ---
+        env_vars = {
+            "INPUT_TOPIC": config.get("input_topic"),
+            "OUTPUT_TOPIC": final_output_topic,
+        }
+
+        # --- MODEL & VOLUME LOGIC ---
+        volumes = {}
+        model_selection = config.get("model_path", "")
+
+        # If it's an absolute path from the browser, we mount it
+        if os.path.isabs(model_selection) and model_selection.endswith(".pt"):
+            internal_path = "/ros_ws/deployed_model.pt"
+            volumes[model_selection] = {'bind': internal_path, 'mode': 'ro'}
+            env_vars["MODEL_PATH"] = internal_path
+        else:
+            env_vars["MODEL_PATH"] = model_selection or node_template["params"].get("default_model")
+
+        # Map rest of the launch args
+        for arg in node_template.get("launch_args", []):
+            if arg in ["output_topic", "model_path"]: 
+                continue
+            
+            val = config.get(arg)
+            
+            # CRITICAL FIX: Only add to env_vars if the value is NOT an empty string
+            if val is not None and str(val).strip() != "":
+                # Convert key to uppercase for Docker ENV (e.g., confidence_threshold -> CONFIDENCE_THRESHOLD)
+                env_vars[arg.upper()] = str(val)
+            else:
+                print(f"Skipping empty arg: {arg}, defaulting to Dockerfile ENV")
+
+        # Launch with GPU Access and Volumes
+        print(env_vars)
         container = client.containers.run(
             image=node_template["image"],
             detach=True,
             network_mode="host",
-            environment={
-                "YOLO_INPUT_TOPIC": config.get("input_topic"),
-                "YOLO_MODEL": config.get("model", node_template["params"]["default_model"]),
-                "YOLO_OUTPUT_TOPIC": "/yolo/detections_image",
-            },
-            labels={"managed_by": "perception_dashboard", "node_type": node_id}
+            ipc_mode="host",
+            device_requests=[docker.types.DeviceRequest(count=-1, capabilities=[['gpu']])],
+            environment=env_vars,
+            volumes=volumes,
+            labels={
+                "managed_by": "perception_dashboard", 
+                "node_type": node_id,
+                "input_topic": config.get("input_topic"),
+                "output_topic": final_output_topic
+            }
         )
-        return {"status": "success", "id": container.id}
+        
+        return {"status": "success", "id": container.id, "output_topic": final_output_topic}
+        
     except Exception as e:
+        print(f"Deployment Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/explore")
@@ -219,9 +299,9 @@ async def get_fleet():
             if c.labels.get("role") == "player": continue
             
             env = c.attrs['Config']['Env']
-            model = next((v.split('=')[1] for v in env if "YOLO_MODEL" in v), "N/A")
-            output = next((v.split('=')[1] for v in env if "YOLO_OUTPUT_TOPIC" in v), "/results")
-            input_t = next((v.split('=')[1] for v in env if "YOLO_INPUT_TOPIC" in v), "/image_raw")
+            model = next((v.split('=')[1] for v in env if "MODEL_PATH" in v), "N/A")
+            output = next((v.split('=')[1] for v in env if "OUTPUT_TOPIC" in v), "/results")
+            input_t = next((v.split('=')[1] for v in env if "INPUT_TOPIC" in v), "/image_raw")
 
             fleet.append({
                 "id": c.id,

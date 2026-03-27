@@ -8,9 +8,12 @@
     "params": {
       "input_type": "sensor_msgs/msg/Image",
       "output_type": "sensor_msgs/msg/Image",
-      "default_model": "yolo11n.pt"
+      "default_model": "yolo11n.pt",
+      "default_conf": "0.5",
+      "default_res": "640",
+      "model_options": ["yolo11n.pt", "yolo11m.pt", "yolo11l.pt", "custom"]
     },
-    "launch_args": ["conf_threshold", "output_topic", "model_path", "image resolution"]
+    "launch_args": ["confidence_threshold", "output_topic", "model_path", "image_resolution"]
   },
   {
     "id": "leaf_seg",
