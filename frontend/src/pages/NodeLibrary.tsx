@@ -19,7 +19,9 @@ export default function NodeLibrary() {
     const fetchCatalog = async () => {
       try {
         setIsLoading(true);
-        const response = await fetch('http://localhost:8000/api/node-repository');
+        const response = await fetch(
+          'http://localhost:8000/api/node-repository?t=' + Date.now()
+        );
         if (!response.ok) throw new Error('Failed to fetch node catalog');
         const data = await response.json();
         setNodes(data);
@@ -119,6 +121,7 @@ export default function NodeLibrary() {
       {/* RENDER THE ADVANCED MODAL */}
       {selectedNode && (
         <DeploymentModal 
+          key={selectedNode.id} 
           node={selectedNode} 
           onClose={() => setSelectedNode(null)} 
           onDeploy={handleDeploy} 

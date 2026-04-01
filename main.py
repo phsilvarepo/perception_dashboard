@@ -1,6 +1,6 @@
 import docker
 import os  
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 import rosbag2_py
 from pathlib import Path
@@ -106,7 +106,8 @@ async def inspect_bag(path: str):
         raise HTTPException(status_code=500, detail=f"ROS2 Bag Error: {str(e)}")
 
 @app.get("/api/node-repository")
-async def get_node_repository():
+async def get_node_repository(response: Response):
+    response.headers["Cache-Control"] = "no-store"
     try:
         with open("nodes.json", "r") as f:
             data = json.load(f)

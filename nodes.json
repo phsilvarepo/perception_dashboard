@@ -16,16 +16,79 @@
     "launch_args": ["confidence_threshold", "output_topic", "model_path", "image_resolution"]
   },
   {
-    "id": "leaf_seg",
+    "id": "leaf_seg_yolo",
     "name": "Instance Segmentation",
-    "image": "ghcr.io/phsilvarepo/yolov11-ros2:latest",
+    "image": "ghcr.io/phsilvarepo/yolov11-ros2-humble-base:latest",
     "category": "Agriculture AI",
     "description": "Pixel-level masking for organic material separation.",
     "params": {
       "input_type": "sensor_msgs/msg/Image",
       "output_type": "sensor_msgs/msg/Image",
-      "default_model": "/ros_ws/src/yolov11_ros2/leaf_seg.pt"
+      "default_model": "https://github.com/phsilvarepo/YOLOv11/releases/download/v1/leaf_seg.pt",
+      "default_conf": "0.5",
+      "default_res": "640",
+      "model_options": ["custom"]
     },
-    "launch_args": ["mask_opacity"]
+    "launch_args": ["confidence_threshold", "output_topic", "model_path", "image_resolution"]
+  },
+  {
+    "id": "rfdetr_trt_det_yolo",
+    "name": "RFDETR TRT Object Detection",
+    "image": "ghcr.io/phsilvarepo/rfdetr-trt-ros2-humble:latest",
+    "category": "Computer Vision",
+    "description": "High-speed 2D detection for common spatial objects.",
+    "params": {
+      "input_type": "sensor_msgs/msg/Image",
+      "output_type": "sensor_msgs/msg/Image",
+      "default_model": "/ros_ws/src/rfdetr_trt_node/rfdetr_trt_node/models/rfdetr_trt.engine",
+      "default_conf": "0.5",
+      "default_res": "576",
+      "model_options": ["custom"]
+    },
+    "launch_args": ["confidence_threshold", "output_topic", "model_path", "image_resolution"]
+  },
+  {
+    "id": "obj_seg_yolo",
+    "name": "YOLO Object Segmentation",
+    "image": "ghcr.io/phsilvarepo/yolov11-ros2-humble-base:latest",
+    "category": "Computer Vision",
+    "description": "High-speed 2D detection for common spatial objects.",
+    "params": {
+      "input_type": "sensor_msgs/msg/Image",
+      "output_type": "sensor_msgs/msg/Image",
+      "default_model": "yolo11n-seg.pt",
+      "default_conf": "0.5",
+      "default_res": "640",
+      "model_options": ["yolo11n-seg.pt", "yolo11m-seg.pt", "yolo11l-seg.pt", "custom"]
+    },
+    "launch_args": ["confidence_threshold", "output_topic", "model_path", "image_resolution"]
+  },
+  {
+    "id": "pose_det_yolo",
+    "name": "YOLO Pose Detector",
+    "image": "ghcr.io/phsilvarepo/yolov11-ros2-humble-base:latest",
+    "category": "Computer Vision",
+    "description": "Keypoints pose detector for common spatial objects.",
+    "params": {
+      "input_type": "sensor_msgs/msg/Image",
+      "output_type": "sensor_msgs/msg/Image",
+      "default_model": "yolo11n-pose.pt",
+      "default_conf": "0.5",
+      "default_res": "640",
+      "model_options": ["yolo11n-pose.pt", "yolo11m-pose.pt", "yolo11l-pose.pt", "custom"]
+    },
+    "launch_args": ["confidence_threshold", "output_topic", "model_path", "image_resolution"]
+  },
+  {
+    "id": "ocr_paddleocr",
+    "name": "Paddle Optical Character Recognition",
+    "image": "ghcr.io/phsilvarepo/ocr-ros2-humble:latest",
+    "category": "Computer Vision",
+    "description": "Extract text present in captured images",
+    "params": {
+      "input_type": "sensor_msgs/msg/Image",
+      "output_type": "std_msgs/String"
+    },
+    "launch_args": ["output_topic"]
   }
 ]
