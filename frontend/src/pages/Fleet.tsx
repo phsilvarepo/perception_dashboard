@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Play, Square, HardDrive, Pause, Info, X, Activity, Globe, Hash, Eye } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Play, Square, HardDrive, Pause, Info, X, Activity, Globe, Hash, Eye, Terminal } from 'lucide-react';
 
 interface Node {
   id: string;
@@ -7,9 +7,10 @@ interface Node {
   type: string;
   weights: string;
   status: string;
-  input_topic: string;  // Added
+  input_topic: string;
   output_topic: string;
   container_id: string;
+  output_type: string; // Added to handle different message types
 }
 
 interface FleetProps {
@@ -19,11 +20,33 @@ interface FleetProps {
 
 export default function Fleet({ nodes, onToggleStatus }: FleetProps) {
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [liveData, setLiveData] = useState<any[]>([]);
+
+  // Polling effect for non-image data (like OCR results)
+  useEffect(() => {
+    let interval: any;
+    if (selectedNode && selectedNode.output_type !== "sensor_msgs/msg/Image") {
+      setLiveData([]); // Clear old data on switch
+      interval = setInterval(async () => {
+        try {
+          const res = await fetch(`http://localhost:8000/api/data?topic=${selectedNode.output_topic}&type=${selectedNode.output_type}`);
+          if (res.ok) {
+            const data = await res.json();
+            setLiveData(data);
+          }
+        } catch (err) {
+          console.error("Data polling error:", err);
+        }
+      }, 500); // Polling at 2Hz for text data
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [selectedNode]);
 
   const formatTopic = (topic: string) => {
     if (!topic) return "N/A";
-    let cleaned = topic.startsWith('//') ? topic.substring(1) : topic;
-    return cleaned;
+    return topic.startsWith('//') ? topic.substring(1) : topic;
   };
 
   return (
@@ -108,6 +131,7 @@ export default function Fleet({ nodes, onToggleStatus }: FleetProps) {
 
             {/* LIVE FEEDS SECTION */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
+              {/* INPUT FEED (Always Image) */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between px-2">
                   <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Input: {formatTopic(selectedNode.input_topic)}</p>
@@ -122,18 +146,46 @@ export default function Fleet({ nodes, onToggleStatus }: FleetProps) {
                   />
                 </div>
               </div>
+
+              {/* DYNAMIC OUTPUT FEED */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between px-2">
                   <p className="text-[10px] font-black text-sky-500 uppercase tracking-widest">Output: {formatTopic(selectedNode.output_topic)}</p>
                   <span className="text-[9px] bg-sky-500/20 text-sky-400 px-2 py-0.5 rounded font-bold uppercase">Inference</span>
                 </div>
-                <div className="aspect-video rounded-3xl bg-black border border-sky-500/20 overflow-hidden shadow-inner">
-                  <img 
-                    src={`http://localhost:8000/api/stream?topic=${selectedNode.output_topic}`} 
-                    className="w-full h-full object-contain"
-                    alt="Output Stream"
-                    onError={(e) => (e.currentTarget.src = "https://placehold.co/640x360/09090b/404040?text=Processing...")}
-                  />
+                <div className="aspect-video rounded-3xl bg-black border border-sky-500/20 overflow-hidden shadow-inner flex flex-col">
+                  {selectedNode.output_type === "sensor_msgs/msg/Image" ? (
+                    <img 
+                      src={`http://localhost:8000/api/stream?topic=${selectedNode.output_topic}`} 
+                      className="w-full h-full object-contain"
+                      alt="Output Stream"
+                      onError={(e) => (e.currentTarget.src = "https://placehold.co/640x360/09090b/404040?text=Processing...")}
+                    />
+                  ) : (
+                    <div className="flex-1 p-5 font-mono text-xs overflow-y-auto bg-zinc-950 custom-scrollbar">
+                       <div className="flex items-center gap-2 text-sky-500 mb-4 border-b border-sky-500/20 pb-2">
+                          <Terminal size={14} />
+                          <span className="font-black uppercase tracking-tighter">Data Stream ({selectedNode.output_type.split('/').pop()})</span>
+                        </div>
+                        {liveData && liveData.length > 0 ? (
+                          liveData.map((item, i) => (
+                            <div key={i} className="mb-2 flex justify-between items-center bg-white/5 p-2.5 rounded-xl border border-white/5 animate-in slide-in-from-left-2 duration-300">
+                              <span className="text-zinc-100 font-bold">{item.text || JSON.stringify(item)}</span>
+                              {item.conf && (
+                                <span className="text-[10px] font-black text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded">
+                                  {(item.conf * 100).toFixed(1)}%
+                                </span>
+                              )}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-full text-zinc-600 gap-2">
+                             <div className="w-1 h-1 bg-zinc-600 rounded-full animate-ping" />
+                             <p className="italic">Waiting for inference data...</p>
+                          </div>
+                        )}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

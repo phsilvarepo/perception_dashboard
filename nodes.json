@@ -81,13 +81,13 @@
   },
   {
     "id": "ocr_paddleocr",
-    "name": "Paddle Optical Character Recognition",
+    "name": "Paddle OCR",
     "image": "ghcr.io/phsilvarepo/ocr-ros2-humble:latest",
     "category": "Computer Vision",
     "description": "Extract text present in captured images",
     "params": {
       "input_type": "sensor_msgs/msg/Image",
-      "output_type": "std_msgs/String"
+      "output_type": "ocr_interfaces/msg/OCRResultArray"
     },
     "launch_args": ["output_topic"]
   }

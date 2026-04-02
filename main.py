@@ -17,7 +17,9 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup
 import uuid
+from ocr_interfaces.msg import OCRResultArray
 
+latest_data = {}
 bridge = CvBridge()
 latest_frames = {}
 active_subscriptions = set()  # Track subscribed topics to avoid duplicates
@@ -293,29 +295,47 @@ async def resume_node(container_id: str):
 
 @app.get("/api/fleet")
 async def get_fleet():
-    try:
-        containers = client.containers.list(all=True, filters={"label": "managed_by=perception_dashboard"})
-        fleet = []
-        for c in containers:
-            if c.labels.get("role") == "player": continue
-            
-            env = c.attrs['Config']['Env']
-            model = next((v.split('=')[1] for v in env if "MODEL_PATH" in v), "N/A")
-            output = next((v.split('=')[1] for v in env if "OUTPUT_TOPIC" in v), "/results")
-            input_t = next((v.split('=')[1] for v in env if "INPUT_TOPIC" in v), "/image_raw")
+    with open("nodes.json", "r") as f:
+        catalog = json.load(f)
+        
+    containers = client.containers.list(all=True, filters={"label": "managed_by=perception_dashboard"})
+    fleet = []
+    for c in containers:
+        node_type_id = c.labels.get("node_type")
+        template = next((n for n in catalog if n["id"] == node_type_id), None)
+        
+        env = {v.split('=')[0]: v.split('=')[1] for v in c.attrs['Config']['Env'] if '=' in v}
+        
+        fleet.append({
+            "id": c.id,
+            "name": c.name,
+            "node_type_id": node_type_id,
+            "output_type": template["params"]["output_type"] if template else "sensor_msgs/msg/Image",
+            "weights": env.get("MODEL_PATH", "N/A"),
+            "input_topic": env.get("INPUT_TOPIC", "/image_raw"),
+            "output_topic": env.get("OUTPUT_TOPIC", "/results"),
+            "status": c.status.capitalize(),
+        })
+    return fleet
 
-            fleet.append({
-                "id": c.id,
-                "name": c.name,
-                "type": c.labels.get("node_type", "Perception"),
-                "weights": model,
-                "input_topic": input_t,
-                "output_topic": output,
-                "status": c.status.capitalize(),
-                "container_id": c.short_id
-            })
-        return fleet
-    except: return []
+def data_callback(msg, topic_name):
+    # Convert ROS2 msg to dict for JSON serialization
+    if hasattr(msg, 'results'):
+        latest_data[topic_name] = [
+            {"text": r.text, "conf": r.confidence} for r in msg.results
+        ]
+
+@app.get("/api/data")
+async def get_topic_data(topic: str, type: str):
+    full_topic = f"/{topic.lstrip('/')}"
+    if full_topic not in active_subscriptions:
+        if type == "ocr_interfaces/msg/OCRResultArray":
+            discovery_node.create_subscription(
+                OCRResultArray, full_topic, 
+                lambda msg, t=full_topic: data_callback(msg, t), 10)
+            active_subscriptions.add(full_topic)
+    
+    return latest_data.get(full_topic, [])
 
 def image_callback(msg, topic_name):
     print(f"Received frame from {topic_name}!")
